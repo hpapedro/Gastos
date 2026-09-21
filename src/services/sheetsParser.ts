@@ -95,249 +95,283 @@ export function parseCSVLine(line: string): string[] {
 /**
  * Parses raw CSV content from Google Sheets into a structured MonthSummary object.
  */
+/**
+ * Parses raw CSV content from Google Sheets into a structured MonthSummary object.
+ */
 export function parseMonthCSV(csvText: string, monthName: string, gid: string): MonthSummary {
   const lines = csvText.split(/\r?\n/).map((l) => parseCSVLine(l));
 
   let totalSpentCell = 0;
-  let fixedSpentCell = 0;
-  let monthSpentCell = 0;
-  let cardInstallmentsSpentCell = 0;
   let remainingBalanceCell = 0;
   let incomeTotal = 7000;
 
   const transactions: Transaction[] = [];
   const fixedExpenses: Transaction[] = [];
   const installments: Transaction[] = [];
-  const parsedCategoryTable: Map<string, { expected: number; spent: number; pct: number }> = new Map();
   const paymentMethods: PaymentTypeSummary[] = [];
 
+  // 1. Detect Income and Summary Cells
   for (let r = 0; r < lines.length; r++) {
     const row = lines[r];
     const rowStr = row.join(' ');
 
-    // 1. Detect Totals from top summary cells
     for (let c = 0; c < row.length; c++) {
       const cell = (row[c] || '').trim();
       const nextCell = (row[c + 1] || '').trim();
-      const cellAfterNext = (row[c + 2] || '').trim();
 
       if (cell.includes('Total de gastos:') && nextCell) {
         totalSpentCell = parseCurrency(nextCell);
-      }
-      if (cell.includes('Total de Fixos:') && (nextCell || cellAfterNext)) {
-        fixedSpentCell = parseCurrency(nextCell || cellAfterNext);
-      }
-      if (cell.includes('Total de Gastos do Mês:') && (nextCell || cellAfterNext)) {
-        monthSpentCell = parseCurrency(nextCell || cellAfterNext);
-      }
-      if (cell.includes('Total de Cartão de Crédito') && (nextCell || cellAfterNext)) {
-        cardInstallmentsSpentCell = parseCurrency(nextCell || cellAfterNext);
       }
       if (cell.includes('Saldo:') && nextCell) {
         remainingBalanceCell = parseCurrency(nextCell);
       }
       if (cell.includes('Salário') || (cell === 'Total:' && rowStr.includes('Entradas'))) {
         const val = parseCurrency(nextCell);
-        if (val > 0) incomeTotal = val;
-      }
-    }
-
-    // 2. Parse Category Summary from right columns if present
-    for (let c = 0; c < row.length - 2; c++) {
-      const cellVal = row[c];
-      const spentCand = row[c + 1]?.includes('R$') ? row[c + 1] : row[c + 2]?.includes('R$') ? row[c + 2] : null;
-      const pctCand = row[c + 2]?.includes('%') ? row[c + 2] : row[c + 3]?.includes('%') ? row[c + 3] : null;
-
-      if (cellVal && spentCand && (spentCand.includes('R$') || pctCand?.includes('%'))) {
-        const catClean = cellVal.trim();
-        const spentNum = parseCurrency(spentCand);
-        const pctNum = parsePercentage(pctCand);
-
-        if (catClean && catClean !== 'Categoria' && !catClean.includes('Total') && (spentNum > 0 || pctNum > 0)) {
-          if (!parsedCategoryTable.has(catClean.toLowerCase())) {
-            parsedCategoryTable.set(catClean.toLowerCase(), {
-              expected: 0,
-              spent: spentNum,
-              pct: pctNum,
-            });
-          }
-        }
-      }
-    }
-
-    // 3. Parse Payment Methods (Cartões)
-    const cardNames = ['NUBANK', 'BANCO DO BRASIL', 'BB ELO MAIS', 'BB ELO Mais', 'Crédito 4', 'Débito'];
-    for (let c = 0; c < row.length; c++) {
-      const cellUpper = (row[c] || '').trim().toUpperCase();
-      const matchedCard = cardNames.find((cn) => cn.toUpperCase() === cellUpper);
-      if (matchedCard && row[c + 1]?.includes('R$')) {
-        const spent = parseCurrency(row[c + 1]);
-        const isPaid = row[c + 3]?.toUpperCase() === 'TRUE';
-        if (!paymentMethods.some((pm) => pm.name.toUpperCase() === matchedCard.toUpperCase())) {
-          paymentMethods.push({
-            name: matchedCard,
-            spent,
-            isPaid,
-          });
-        }
-      }
-    }
-
-    // 4. Parse Fixed Expenses (Fixos)
-    if (
-      row[2] &&
-      row[8] &&
-      row[8].includes('R$') &&
-      row[7] &&
-      !rowStr.includes('Nome') &&
-      !rowStr.includes('Total') &&
-      !rowStr.includes('Parcelas')
-    ) {
-      const fName = row[2].trim();
-      const fDate = row[4]?.trim() || '';
-      const fTipo = row[6]?.trim() || '';
-      const fCat = row[7]?.trim() || '';
-      const fVal = parseCurrency(row[8]);
-      if (fVal > 0 && fName && !fixedExpenses.some((f) => f.name === fName && f.value === fVal)) {
-        fixedExpenses.push({
-          id: `fixo-${fixedExpenses.length + 1}`,
-          name: fName,
-          date: fDate,
-          paymentType: fTipo,
-          category: fCat,
-          value: fVal,
-          isFixed: true,
-        });
-      }
-    }
-
-    // 5. Parse Installments (Parcelados)
-    if (row[2] && row[3]?.includes('/') && row[8]?.includes('R$')) {
-      const pName = row[2].trim();
-      const pInst = row[3].trim();
-      const pTipo = row[6]?.trim() || '';
-      const pCat = row[7]?.trim() || '';
-      const pVal = parseCurrency(row[8]);
-      if (pVal > 0 && !installments.some((i) => i.name === pName && i.value === pVal)) {
-        installments.push({
-          id: `parc-${installments.length + 1}`,
-          name: pName,
-          installments: pInst,
-          paymentType: pTipo,
-          category: pCat,
-          value: pVal,
-        });
-      }
-    }
-
-    // 6. Parse Month Transactions (Gastos do Mês)
-    for (let c = 8; c < row.length - 4; c++) {
-      const valCandidate = row[c + 4];
-      const dateCandidate = row[c + 1];
-      const tipoCandidate = row[c + 2];
-      const catCandidate = row[c + 3];
-      const nameCandidate = row[c];
-
-      if (
-        nameCandidate &&
-        dateCandidate &&
-        dateCandidate.includes('/') &&
-        valCandidate &&
-        valCandidate.includes('R$') &&
-        nameCandidate !== 'Nome' &&
-        !nameCandidate.includes('Total')
-      ) {
-        const tVal = parseCurrency(valCandidate);
-        if (tVal > 0) {
-          transactions.push({
-            id: `tx-${transactions.length + 1}`,
-            name: nameCandidate.trim(),
-            date: dateCandidate.trim(),
-            paymentType: (tipoCandidate || 'Outro').trim(),
-            category: (catCandidate || 'Geral').trim(),
-            value: tVal,
-          });
-        }
-        break;
+        if (val > 1000) incomeTotal = val;
       }
     }
   }
 
-  // Exact sums calculated from parsed line items (ensuring 0,00 never appears when items exist!)
+  // 2. Parse Official Category Table from the right-hand section
+  // Column >= 15, starting at row where header contains 'Categoria'
+  let catHeaderRow = -1;
+  let catCol = -1;
+  lines.forEach((row, r) => {
+    row.forEach((cell, c) => {
+      if (cell === 'Categoria' && c >= 15 && catHeaderRow === -1) {
+        catHeaderRow = r;
+        catCol = c;
+      }
+    });
+  });
+
+  const parsedCategoriesRaw: { name: string; spent: number }[] = [];
+  if (catHeaderRow !== -1) {
+    for (let r = catHeaderRow + 1; r < lines.length; r++) {
+      const row = lines[r];
+      const catName = row[catCol]?.trim();
+
+      if (
+        !catName ||
+        catName === 'Gastos por tipo de pagamento' ||
+        catName === 'Data' ||
+        catName.toLowerCase().includes('total')
+      ) {
+        if (catName === 'Gastos por tipo de pagamento') break;
+        continue;
+      }
+
+      // CRITICAL: NEVER include "Saldo" as an expense category
+      if (catName.toLowerCase().includes('saldo')) continue;
+
+      let spent = 0;
+      for (let c = catCol + 1; c < catCol + 5; c++) {
+        if (row[c]?.includes('R$')) {
+          spent = parseCurrency(row[c]);
+          break;
+        }
+      }
+
+      parsedCategoriesRaw.push({
+        name: catName,
+        spent,
+      });
+    }
+  }
+
+  // 3. Parse Payment Methods (Cartões) from Saídas / Gastos por tipo de pagamento (rows 16-35)
+  const cardNames = [
+    'DÉBITO',
+    'DEBITO',
+    'NUBANK',
+    'BANCO DO BRASIL',
+    'BB ELO MAIS',
+    'BB ELO Mais',
+    'CRÉDITO 4',
+    'CREDITO 4',
+  ];
+
+  for (let r = 16; r < Math.min(lines.length, 36); r++) {
+    const row = lines[r];
+    for (let c = 15; c < row.length; c++) {
+      const cellVal = (row[c] || '').trim().toUpperCase();
+      const matched = cardNames.find((cn) => cn.toUpperCase() === cellVal);
+      if (matched) {
+        let spent = 0;
+        let isPaid = false;
+        for (let k = c + 1; k <= c + 4; k++) {
+          if (row[k]?.includes('R$')) {
+            spent = parseCurrency(row[k]);
+            break;
+          }
+        }
+        for (let k = c + 1; k <= c + 5; k++) {
+          if (row[k]?.toUpperCase() === 'TRUE') isPaid = true;
+        }
+
+        let displayName = 'Cartão';
+        if (matched.includes('NUBANK')) displayName = 'NUBANK';
+        else if (matched.includes('BANCO DO BRASIL')) displayName = 'BANCO DO BRASIL';
+        else if (matched.includes('BB ELO')) displayName = 'BB ELO MAIS';
+        else if (matched.includes('DÉBITO') || matched.includes('DEBITO')) displayName = 'Débito';
+        else if (matched.includes('CRÉDITO 4') || matched.includes('CREDITO 4')) displayName = 'Crédito 4';
+
+        if (!paymentMethods.some((pm) => pm.name.toUpperCase() === displayName.toUpperCase())) {
+          paymentMethods.push({ name: displayName, spent, isPaid });
+        }
+      }
+    }
+  }
+
+  // 4. Parse Fixed Expenses (Fixos) & Installments (Cartão de Crédito parcelado)
+  let fixosStart = -1;
+  let parcelasStart = -1;
+  lines.forEach((row, r) => {
+    if (row[2] === 'Fixos') fixosStart = r;
+    if (row[2] === 'Cartão de Crédito') parcelasStart = r;
+  });
+
+  if (fixosStart !== -1) {
+    const endR = parcelasStart !== -1 ? parcelasStart : lines.length;
+    for (let r = fixosStart + 2; r < endR; r++) {
+      const row = lines[r];
+      if (row[2]?.includes('Total') || !row[2]) break;
+      const name = row[2].trim();
+      const date = row[4]?.trim() || '';
+      const tipo = row[6]?.trim() || '';
+      const cat = row[7]?.trim() || '';
+      const val = parseCurrency(row[8]);
+      if (val > 0 && name) {
+        fixedExpenses.push({
+          id: `fix-${fixedExpenses.length + 1}`,
+          name,
+          date,
+          paymentType: tipo,
+          category: cat,
+          value: val,
+          isFixed: true,
+        });
+      }
+    }
+  }
+
+  if (parcelasStart !== -1) {
+    for (let r = parcelasStart + 2; r < lines.length; r++) {
+      const row = lines[r];
+      if (row[2]?.includes('Total') || !row[2]) break;
+      const name = row[2].trim();
+      const inst = row[3]?.trim() || '';
+      const tipo = row[6]?.trim() || '';
+      const cat = row[7]?.trim() || '';
+      const val = parseCurrency(row[8]);
+      if (val > 0 && name) {
+        installments.push({
+          id: `parc-${installments.length + 1}`,
+          name,
+          installments: inst,
+          paymentType: tipo,
+          category: cat,
+          value: val,
+        });
+      }
+    }
+  }
+
+  // 5. Parse Month Transactions (Gastos do Mês)
+  for (let r = 8; r < lines.length; r++) {
+    const row = lines[r];
+    const name = row[10]?.trim() || (row[9]?.includes('/') ? '' : row[9]?.trim());
+    let date = '';
+    let tipo = '';
+    let cat = '';
+    let val = 0;
+    for (let c = 10; c <= 16; c++) {
+      if (row[c]?.includes('/') && !date) date = row[c].trim();
+      if (row[c]?.includes('R$') && !val) val = parseCurrency(row[c]);
+    }
+
+    if (name && val > 0 && name !== 'Nome' && !name.includes('Total') && date) {
+      for (let c = 11; c <= 15; c++) {
+        const v = row[c]?.trim();
+        if (cardNames.some((k) => k.toLowerCase() === v?.toLowerCase())) {
+          tipo = v;
+        }
+        if (parsedCategoriesRaw.some((cr) => cr.name.toLowerCase() === v?.toLowerCase())) {
+          cat = v;
+        }
+      }
+      transactions.push({
+        id: `tx-${transactions.length + 1}`,
+        name,
+        date,
+        paymentType: tipo || 'BANCO DO BRASIL',
+        category: cat || 'Outros',
+        value: val,
+      });
+    }
+  }
+
+  // 6. Subtotals & Harmonized Totals
   const computedFixedSpent = Math.round(fixedExpenses.reduce((s, t) => s + t.value, 0) * 100) / 100;
   const computedMonthSpent = Math.round(transactions.reduce((s, t) => s + t.value, 0) * 100) / 100;
   const computedInstallmentsSpent = Math.round(installments.reduce((s, t) => s + t.value, 0) * 100) / 100;
+  const subtotalsSum = Math.round((computedFixedSpent + computedMonthSpent + computedInstallmentsSpent) * 100) / 100;
 
-  const fixedSpent = fixedSpentCell > 0 ? fixedSpentCell : computedFixedSpent;
-  const monthSpent = monthSpentCell > 0 ? monthSpentCell : computedMonthSpent;
-  const cardInstallmentsSpent =
-    cardInstallmentsSpentCell > 0 ? cardInstallmentsSpentCell : computedInstallmentsSpent;
+  const cardSum = Math.round(paymentMethods.reduce((s, pm) => s + pm.spent, 0) * 100) / 100;
+  const catSum = Math.round(parsedCategoriesRaw.reduce((s, c) => s + c.spent, 0) * 100) / 100;
 
-  const sumOfAll = Math.round((fixedSpent + monthSpent + cardInstallmentsSpent) * 100) / 100;
-  const totalSpent = totalSpentCell > 0 ? totalSpentCell : sumOfAll;
+  // The actual accumulated spending is the true sum of expenses (cards sum = categories sum = subtotals sum)
+  const totalSpent =
+    cardSum > 0
+      ? cardSum
+      : catSum > 0
+      ? catSum
+      : subtotalsSum > 0
+      ? subtotalsSum
+      : totalSpentCell;
+
   const remainingBalance =
-    remainingBalanceCell > 0 ? remainingBalanceCell : Math.max(0, Math.round((incomeTotal - totalSpent) * 100) / 100);
+    remainingBalanceCell > 0 && Math.abs(remainingBalanceCell - (incomeTotal - totalSpent)) < 1
+      ? remainingBalanceCell
+      : Math.max(0, Math.round((incomeTotal - totalSpent) * 100) / 100);
 
-  // 7. COMPREHENSIVE CATEGORY AGGREGATION:
-  // Build category totals from ALL actual transactions, fixed expenses, and installments!
-  const allExpenses = [...transactions, ...fixedExpenses, ...installments];
-  const categorySpentMap = new Map<string, number>();
+  // 7. Process Categories with 100% accurate percentages and ALL categories preserved
+  let categories: CategorySummary[] = [];
 
-  allExpenses.forEach((t) => {
-    const rawCat = (t.category || 'Geral').trim();
-    const cleanCat = rawCat.charAt(0).toUpperCase() + rawCat.slice(1);
-    categorySpentMap.set(cleanCat, (categorySpentMap.get(cleanCat) || 0) + t.value);
-  });
-
-  // Also incorporate any categories from the sheet table if higher or missing
-  parsedCategoryTable.forEach((data, catKey) => {
-    const matchedKey = Array.from(categorySpentMap.keys()).find(
-      (k) => k.toLowerCase() === catKey
-    );
-    if (matchedKey) {
-      if (data.spent > (categorySpentMap.get(matchedKey) || 0)) {
-        categorySpentMap.set(matchedKey, data.spent);
-      }
-    } else if (data.spent > 0) {
-      const formatted = catKey.charAt(0).toUpperCase() + catKey.slice(1);
-      categorySpentMap.set(formatted, data.spent);
-    }
-  });
-
-  // Convert map to CategorySummary array
-  const categories: CategorySummary[] = [];
-  const baseForPercentages = totalSpent > 0 ? totalSpent : sumOfAll > 0 ? sumOfAll : 1;
-
-  categorySpentMap.forEach((spentVal, catName) => {
-    const roundedSpent = Math.round(spentVal * 100) / 100;
-    const pct = Math.round((roundedSpent / baseForPercentages) * 10000) / 100;
-    categories.push({
-      name: catName,
-      expected: 0,
-      spent: roundedSpent,
-      percentage: pct,
-      isAlert: pct >= 80,
+  if (parsedCategoriesRaw.length > 0) {
+    const baseForPct = totalSpent > 0 ? totalSpent : catSum > 0 ? catSum : 1;
+    categories = parsedCategoriesRaw.map((c) => {
+      const pct = Math.round((c.spent / baseForPct) * 10000) / 100;
+      return {
+        name: c.name,
+        expected: 0,
+        spent: c.spent,
+        percentage: pct,
+        isAlert: pct >= 80,
+      };
     });
-  });
-
-  // Sort categories by highest spent
-  categories.sort((a, b) => b.spent - a.spent);
-
-  // If payment methods from top was empty, build from transactions
-  if (paymentMethods.length === 0 && allExpenses.length > 0) {
-    const pmMap = new Map<string, number>();
-    allExpenses.forEach((t) => {
-      const pm = (t.paymentType || 'Outro').trim();
-      pmMap.set(pm, (pmMap.get(pm) || 0) + t.value);
+    // Sort: categories with spent > 0 in descending order, followed by 0 values
+    categories.sort((a, b) => b.spent - a.spent);
+  } else {
+    // Fallback: aggregate from transactions
+    const catMap = new Map<string, number>();
+    [...transactions, ...fixedExpenses, ...installments].forEach((t) => {
+      const c = (t.category || 'Outros').trim();
+      catMap.set(c, (catMap.get(c) || 0) + t.value);
     });
-    pmMap.forEach((spent, name) => {
-      paymentMethods.push({
+    const baseForPct = totalSpent > 0 ? totalSpent : 1;
+    catMap.forEach((spent, name) => {
+      const rounded = Math.round(spent * 100) / 100;
+      const pct = Math.round((rounded / baseForPct) * 10000) / 100;
+      categories.push({
         name,
-        spent: Math.round(spent * 100) / 100,
-        isPaid: false,
+        expected: 0,
+        spent: rounded,
+        percentage: pct,
+        isAlert: pct >= 80,
       });
     });
-    paymentMethods.sort((a, b) => b.spent - a.spent);
+    categories.sort((a, b) => b.spent - a.spent);
   }
 
   return {
@@ -345,9 +379,9 @@ export function parseMonthCSV(csvText: string, monthName: string, gid: string): 
     gid,
     incomeTotal: incomeTotal || 7000,
     totalSpent,
-    fixedSpent,
-    monthSpent,
-    cardInstallmentsSpent,
+    fixedSpent: computedFixedSpent,
+    monthSpent: computedMonthSpent,
+    cardInstallmentsSpent: computedInstallmentsSpent,
     remainingBalance,
     categories,
     paymentMethods,
@@ -449,7 +483,7 @@ export function getAuthenticFallbackMonth(monthName: string, gid: string): Month
     monthName,
     gid,
     incomeTotal: 7000.0,
-    totalSpent: 6949.0,
+    totalSpent: 6997.35,
     fixedSpent: 1660.97,
     monthSpent: 4708.8,
     cardInstallmentsSpent: 579.23,

@@ -52,17 +52,23 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
   categories,
   totalSpent,
 }) => {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [selectedCatName, setSelectedCatName] = useState<string | null>(null);
 
-  const chartData = categories.map((c, idx) => ({
-    name: c.name,
-    value: c.spent,
-    percentage: c.percentage,
-    color: getCategoryColor(c.name, idx),
-    isAlert: c.isAlert,
-  }));
+  // Pie chart contains only actual expenses (spent > 0) - Saldo is never included
+  const pieData = categories
+    .filter((c) => c.spent > 0)
+    .map((c, idx) => ({
+      name: c.name,
+      value: c.spent,
+      percentage: c.percentage,
+      color: getCategoryColor(c.name, idx),
+      isAlert: c.isAlert,
+    }));
 
-  const activeCategory = activeIndex !== null ? chartData[activeIndex] : null;
+  const activeCategory = selectedCatName
+    ? pieData.find((c) => c.name.toLowerCase() === selectedCatName.toLowerCase()) ||
+      categories.find((c) => c.name.toLowerCase() === selectedCatName.toLowerCase())
+    : null;
 
   return (
     <div className="card-glass rounded-2xl p-4 sm:p-5 border border-slate-800 shadow-lg space-y-4">
@@ -81,7 +87,7 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
         </span>
       </div>
 
-      {/* Donut Chart (Mobile Fitted) */}
+      {/* Donut Chart (Mobile Fitted - Only Expenses) */}
       <div className="relative flex flex-col items-center justify-center min-h-[190px]">
         <div className="w-full h-48">
           <ResponsiveContainer width="100%" height="100%">
@@ -109,7 +115,7 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
                 }}
               />
               <Pie
-                data={chartData}
+                data={pieData}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
@@ -119,13 +125,18 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
                 paddingAngle={2}
                 stroke="#090D16"
                 strokeWidth={2}
-                onClick={(_, index) => setActiveIndex(activeIndex === index ? null : index)}
+                onClick={(entry: any) => {
+                  const clickedName = entry?.name;
+                  if (typeof clickedName === 'string') {
+                    setSelectedCatName(selectedCatName === clickedName ? null : clickedName);
+                  }
+                }}
               >
-                {chartData.map((entry, index) => (
+                {pieData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
                     fill={entry.color}
-                    opacity={activeIndex === null || activeIndex === index ? 1 : 0.4}
+                    opacity={selectedCatName === null || selectedCatName === entry.name ? 1 : 0.4}
                     className="cursor-pointer transition-opacity"
                   />
                 ))}
@@ -142,9 +153,9 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
                 {activeCategory.name}
               </span>
               <span className="text-sm font-bold text-white num-tabular">
-                {formatCurrency(activeCategory.value)}
+                {formatCurrency('spent' in activeCategory ? activeCategory.spent : (activeCategory as any).value)}
               </span>
-              <span className="text-[10px] font-semibold" style={{ color: activeCategory.color }}>
+              <span className="text-[10px] font-semibold text-emerald-400">
                 {activeCategory.percentage}%
               </span>
             </>
@@ -162,22 +173,26 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
         </div>
       </div>
 
-      {/* Category List */}
-      <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+      {/* Category List - Displays ALL categories */}
+      <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-1">
         {categories.map((cat, idx) => {
           const color = getCategoryColor(cat.name, idx);
           const isAlert = cat.isAlert;
+          const isSelected = selectedCatName === cat.name;
+          const hasSpent = cat.spent > 0;
 
           return (
             <div
               key={cat.name}
-              onClick={() => setActiveIndex(activeIndex === idx ? null : idx)}
+              onClick={() => setSelectedCatName(isSelected ? null : cat.name)}
               className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                activeIndex === idx
+                isSelected
                   ? 'bg-slate-800/90 border-slate-600'
                   : isAlert
                   ? 'bg-rose-950/20 border-rose-500/30'
-                  : 'bg-slate-900/40 hover:bg-slate-800/40 border-slate-800/60'
+                  : hasSpent
+                  ? 'bg-slate-900/40 hover:bg-slate-800/40 border-slate-800/60'
+                  : 'bg-slate-900/20 hover:bg-slate-800/20 border-slate-800/30 opacity-60'
               }`}
             >
               <div className="flex items-center justify-between text-xs mb-1">
@@ -205,7 +220,7 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
                 <div
                   className={`h-full rounded-full transition-all ${isAlert ? 'bg-rose-500' : ''}`}
                   style={{
-                    width: `${Math.min(100, Math.max(2, cat.percentage))}%`,
+                    width: `${Math.min(100, Math.max(hasSpent ? 2 : 0, cat.percentage))}%`,
                     backgroundColor: isAlert ? undefined : color,
                   }}
                 />

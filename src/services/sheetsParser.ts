@@ -1,4 +1,5 @@
 import type {
+  MonthOption,
   MonthSummary,
   Transaction,
   CategorySummary,
@@ -473,6 +474,59 @@ export async function fetchMonthData(
   }
 
   return getAuthenticFallbackMonth(monthName, gid);
+}
+
+/**
+ * Fetches the available months dynamically from Google Sheets pubhtml.
+ */
+export async function fetchMonths(): Promise<MonthOption[]> {
+  const timestamp = Date.now();
+  
+  try {
+    const apiRes = await fetch(`/api/months?_t=${timestamp}`, {
+      cache: 'no-store',
+      headers: { Pragma: 'no-cache', 'Cache-Control': 'no-cache' },
+    });
+    if (apiRes.ok) {
+      const months = await apiRes.json();
+      if (Array.isArray(months) && months.length > 0) {
+        return months;
+      }
+    }
+  } catch {
+    // /api/months might fail locally
+  }
+
+  // Fallback to proxy
+  try {
+    const googleUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vTKiwxfLGGgfjaveTtW0ES34dlbYXUIq7MQSJhzBZ1kJWk9KCiwSvqkwW-riUHCjKFW17Ac3iv2ag8l/pubhtml?_t=${timestamp}`;
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(googleUrl)}`;
+    const proxyRes = await fetch(proxyUrl, { cache: 'no-store' });
+    if (proxyRes.ok) {
+      const html = await proxyRes.text();
+      const regex = /items\.push\(\{name:\s*"([^"]+)",[^\}]*gid:\s*"([^"]+)"/g;
+      const months = [];
+      let match;
+      const ignoreList = ["Comece aqui", "Categorias", "Metas Financeiras", "Panorama anual", "Investimento"];
+      
+      while ((match = regex.exec(html)) !== null) {
+        const name = match[1];
+        const gid = match[2];
+        if (!ignoreList.includes(name)) {
+          months.push({ name, gid });
+        }
+      }
+      if (months.length > 0) {
+        return months;
+      }
+    }
+  } catch (proxyErr) {
+    console.warn('Proxy fetch failed', proxyErr);
+  }
+
+  // Final fallback to KNOWN_MONTHS if everything fails
+  const { KNOWN_MONTHS } = await import('../types/finance');
+  return KNOWN_MONTHS;
 }
 
 /**

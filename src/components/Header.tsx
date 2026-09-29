@@ -1,9 +1,9 @@
 import React from 'react';
 import { RefreshCw, ExternalLink, Sparkles } from 'lucide-react';
-import { KNOWN_MONTHS } from '../types/finance';
 import type { MonthOption } from '../types/finance';
 
 interface HeaderProps {
+  months: MonthOption[];
   selectedMonth: MonthOption;
   onSelectMonth: (m: MonthOption) => void;
   isSyncing: boolean;
@@ -13,6 +13,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
+  months,
   selectedMonth,
   onSelectMonth,
   isSyncing,
@@ -78,7 +79,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Bottom Row: Month Selector Horizontal Scroll Bar */}
         <div className="flex items-center gap-1 overflow-x-auto py-0.5 no-scrollbar -mx-1 px-1">
-          {KNOWN_MONTHS.map((m) => {
+          {months.map((m) => {
             const isSelected = m.gid === selectedMonth.gid;
             return (
               <button

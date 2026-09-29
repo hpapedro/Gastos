@@ -7,16 +7,16 @@ import { CardsBreakdown } from './components/CardsBreakdown';
 import { TransactionsFeed } from './components/TransactionsFeed';
 import { KNOWN_MONTHS, SPREADSHEET_WEB_URL } from './types/finance';
 import type { MonthOption, MonthSummary } from './types/finance';
-import { fetchMonthData } from './services/sheetsParser';
+import { fetchMonthData, fetchMonths } from './services/sheetsParser';
 import { AlertCircle, Loader2, Sparkles } from 'lucide-react';
 
 export function App() {
-  // Default to Outubro or Setembro
   const [selectedMonth, setSelectedMonth] = useState<MonthOption>(
     KNOWN_MONTHS.find((m) => m.name === 'Outubro') ||
     KNOWN_MONTHS.find((m) => m.name === 'Setembro') ||
     KNOWN_MONTHS[0]
   );
+  const [monthsList, setMonthsList] = useState<MonthOption[]>(KNOWN_MONTHS);
   const [monthData, setMonthData] = useState<MonthSummary | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -34,8 +34,22 @@ export function App() {
       setErrorMsg(null);
 
       try {
-        const data = await fetchMonthData(selectedMonth.name, selectedMonth.gid, forceRefresh);
+        const [data, dynamicMonths] = await Promise.all([
+          fetchMonthData(selectedMonth.name, selectedMonth.gid, forceRefresh),
+          fetchMonths()
+        ]);
+        
         setMonthData(data);
+        if (dynamicMonths.length > 0) {
+          setMonthsList(dynamicMonths);
+          
+          // If the currently selected month gid is not in the dynamic list (e.g. they deleted a sheet), we might need to fallback.
+          // But usually they just add a sheet, so we keep the selection.
+          const stillExists = dynamicMonths.find(m => m.gid === selectedMonth.gid);
+          if (!stillExists && dynamicMonths.length > 0) {
+             setSelectedMonth(dynamicMonths[dynamicMonths.length - 1]);
+          }
+        }
       } catch (err) {
         console.error('Failed to load sheet data', err);
         setErrorMsg('Não foi possível conectar ao Google Sheets no momento. Usando dados em cache.');
@@ -64,6 +78,7 @@ export function App() {
     <div className="min-h-screen bg-[#090D16] text-slate-100 flex flex-col selection:bg-emerald-500/20 selection:text-emerald-300 antialiased">
       {/* Top Sticky Header with Safe-Area padding for iPhone */}
       <Header
+        months={monthsList}
         selectedMonth={selectedMonth}
         onSelectMonth={(m) => {
           setSelectedMonth(m);
